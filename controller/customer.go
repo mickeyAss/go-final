@@ -6,7 +6,6 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"golang.org/x/crypto/bcrypt"
 )
 
 func CustomerController(router *gin.Engine) {
@@ -81,13 +80,14 @@ func LoginCustomer(c *gin.Context) {
 
 // API สำหรับเปลี่ยนรหัสผ่าน
 func ChangePassword(c *gin.Context) {
+	// รับข้อมูลจาก Request JSON
 	var data struct {
 		Email       string `json:"email" binding:"required"`
 		OldPassword string `json:"old_password" binding:"required"`
 		NewPassword string `json:"new_password" binding:"required"`
 	}
 
-	// ตรวจสอบว่าได้รับข้อมูลครบหรือไม่
+	// ตรวจสอบข้อมูลที่ส่งมาว่าครบหรือไม่
 	if err := c.ShouldBindJSON(&data); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "กรุณากรอกข้อมูลให้ครบ"})
 		return
@@ -97,33 +97,37 @@ func ChangePassword(c *gin.Context) {
 	var customer model.Customer
 	result := dbconnect.DB.Where("email = ?", data.Email).First(&customer)
 
-	// ตรวจสอบว่าเจอลูกค้าหรือไม่
+	// ตรวจสอบว่าพบลูกค้าหรือไม่
 	if result.Error != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "ไม่พบข้อมูลลูกค้า"})
 		return
 	}
 
-	// ตรวจสอบรหัสผ่านเก่ากับที่เก็บไว้ในฐานข้อมูล (bcrypt)
-	err := bcrypt.CompareHashAndPassword([]byte(customer.Password), []byte(data.OldPassword))
-	if err != nil {
-		// หากมีข้อผิดพลาดในการเปรียบเทียบรหัสผ่าน
+	// ตรวจสอบรหัสผ่านเก่าว่าตรงกับที่เก็บไว้หรือไม่ (ไม่มีการแฮช)
+	if customer.Password != data.OldPassword {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "รหัสผ่านเก่าผิด"})
 		return
 	}
 
-	// เข้ารหัสรหัสผ่านใหม่
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(data.NewPassword), bcrypt.DefaultCost)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "ไม่สามารถเข้ารหัสรหัสผ่านใหม่ได้"})
+	// ตรวจสอบว่ารหัสผ่านใหม่ต้องไม่เหมือนรหัสผ่านเก่า
+	if data.OldPassword == data.NewPassword {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "รหัสผ่านใหม่ต้องไม่เหมือนรหัสผ่านเก่า"})
 		return
 	}
 
-	// อัพเดตรหัสผ่านใหม่ในฐานข้อมูล
-	customer.Password = string(hashedPassword)
+	// ตรวจสอบความยาวรหัสผ่านใหม่ (อย่างน้อย 6 ตัว)
+	if len(data.NewPassword) < 6 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "รหัสผ่านใหม่ต้องมีอย่างน้อย 6 ตัวอักษร"})
+		return
+	}
+
+	// อัพเดตรหัสผ่านใหม่ในฐานข้อมูล (ไม่แฮช)
+	customer.Password = data.NewPassword
 	if err := dbconnect.DB.Save(&customer).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "ไม่สามารถอัพเดตข้อมูลได้"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "ไม่สามารถอัพเดตรหัสผ่านได้"})
 		return
 	}
 
+	// ส่งข้อความตอบกลับเมื่อเปลี่ยนรหัสผ่านสำเร็จ
 	c.JSON(http.StatusOK, gin.H{"message": "เปลี่ยนรหัสผ่านสำเร็จ"})
 }
