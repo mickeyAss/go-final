@@ -6,5 +6,7 @@ import (
 
 func StartServer() {
 	router := gin.Default()
+
+	CustomerController(router)
 	router.Run()
 }
